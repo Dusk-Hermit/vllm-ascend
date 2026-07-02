@@ -15,6 +15,13 @@ LOG_PATTERNS = {
     "traceback": re.compile(r"Traceback|RuntimeError|Exception|ERROR|OOM", re.IGNORECASE),
 }
 
+VLLM_LOG_NAMES = [
+    "run_dsv4.log",
+    "run_dsv4_baseline.log",
+    "run_dsv4_topk_trace.log",
+    "run_dsv4_no_kv_pool.log",
+]
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Summarize one DSV4 sparse KV experiment output directory.")
@@ -35,6 +42,22 @@ def scan_log(path: Path) -> dict[str, Any]:
                     result["patterns"][key] += 1
                     if key in {"kv_load_failure", "traceback"} and len(result["interesting_lines"]) < 80:
                         result["interesting_lines"].append({"line": line_no, "text": line.rstrip()[:1000]})
+    return result
+
+
+def scan_log_candidates(out_dir: Path, names: list[str]) -> dict[str, Any]:
+    scans = [scan_log(out_dir / name) for name in names]
+    result: dict[str, Any] = {
+        "exists": any(scan["exists"] for scan in scans),
+        "paths": [scan["path"] for scan in scans if scan["exists"]],
+        "patterns": {key: 0 for key in LOG_PATTERNS},
+        "interesting_lines": [],
+    }
+    for scan in scans:
+        for key, value in scan.get("patterns", {}).items():
+            result["patterns"][key] += value
+        result["interesting_lines"].extend(scan.get("interesting_lines", []))
+    result["interesting_lines"] = result["interesting_lines"][:80]
     return result
 
 
@@ -123,7 +146,7 @@ def main() -> None:
     summary: dict[str, Any] = {
         "out_dir": str(out_dir),
         "serve_command_file": str(out_dir / "serve_command.txt"),
-        "run_dsv4_log": scan_log(out_dir / "run_dsv4.log"),
+        "run_dsv4_log": scan_log_candidates(out_dir, VLLM_LOG_NAMES),
         "run_mooncake_log": scan_log(out_dir / "run_mooncake.log"),
         "probe_summary": load_json(out_dir / "probe_summary.json"),
         "probe_results_count": len(load_probe_results(out_dir / "probe_results.jsonl")),
